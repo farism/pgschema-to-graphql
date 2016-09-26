@@ -3,31 +3,51 @@ import path from 'path'
 import mkdirp from 'mkdirp'
 import minimist from 'minimist'
 import handlebars from 'handlebars'
+import pg from 'pg'
 import { singularize } from 'inflection'
 import R from 'ramda'
 
 const opts = minimist(process.argv.slice(2), {
-  default: {
-    'schema': 'schema.txt',
-    'out': path.join(process.cwd(), 'out'),
-    'type-template': './templates/type.hbs',
-    'query-template': './templates/query.hbs',
-    'only-types': false,
-    'only-query': false,
-  },
   alias: {
+    // pg client
+    h: 'host',
+    p: 'port',
+    U: 'username',
+    w: 'no-password',
+    W: 'password',
+    d: 'database',
+    // local schema file
     s: 'schema',
+    // shared
     o: 'out',
     t: 'type-template',
     q: 'query-template',
     onlyTypes: 'only-types',
     onlyQuery: 'only-query',
+  },
+  default: {
+    'host': 'localhost',
+    'port': '5432',
+    'out': path.join(process.cwd(), 'out'),
+    'type-template': './templates/type.hbs',
+    'query-template': './templates/query.hbs',
+    'only-types': false,
+    'only-query': false,
   }
 })
 
-const typeTemplate = handlebars.compile(fs.readFileSync(opts.t, 'utf8'))
-const queryTemplate = handlebars.compile(fs.readFileSync(opts.q, 'utf8'))
-const schema = fs.readFileSync(opts.schema, 'utf8')
+const SCALAR_FIELDS = {
+  integer: 'Int',
+  boolean: 'Boolean',
+  character: 'String',
+  text: 'String',
+  timestamp: 'String',
+  tsvector: 'String',
+  date: 'String',
+  datetime: 'String',
+  double: 'Float',
+  float: 'Float'
+}
 
 const toPascalCase = (str) => {
   return str.replace(/^(.)/, (_, letter) => R.toUpper(letter))
@@ -41,84 +61,148 @@ const snakeToCamelCase = (str) => {
 
 const snakeToPascalCase = R.pipe(snakeToCamelCase, toPascalCase)
 
-const extractTables = R.curry((expr, str) => {
-  let match = null
-  const groups = []
-  while(match = expr.exec(str)) {
-    groups.push({
-      raw: match[0],
-      name: singularize(match[1]),
-      camelName: singularize(snakeToCamelCase(match[1])),
-      pascalName: singularize(snakeToPascalCase(match[1])),
-      hasIdField: /\bid integer NOT NULL\b/.test(match[2]),
-      fields: match[2].replace(/('|")/g, '')
+const createTypeObject = (tableName) => {
+  return {
+    tableName,
+    name: singularize(tableName),
+    camelName: singularize(snakeToCamelCase(tableName)),
+    pascalName: singularize(snakeToPascalCase(tableName)),
+  }
+}
+
+const createFieldObject = (scalarMap, columnName, nullable, type) => {
+  const fieldArr = R.filter(R.identity, R.split(' ', columnName))
+  const name = columnName == 'id' ? '_id' : snakeToCamelCase(columnName)
+  const scalarType = scalarMap[type] || 'String'
+  const required = nullable ? '' : '!'
+  const property = columnName === name ? null : columnName
+
+  return { columnName, name, required, type, scalarType, property }
+}
+
+const createAssociationFields = (types) => {
+  return R.map(type => {
+    type.associations = R.pipe(
+      R.filter(field => field.columnName.endsWith('_id')),
+      R.map(field => {
+        const name = field.name.replace(/Id$/, '')
+        const type = toPascalCase(name)
+
+        return { name, type }
+      })
+    )(type.fields)
+
+    return type
+  }, types)
+}
+
+const setHasIdField = (types) => {
+  return R.map(type => {
+    type.hasIdField = type.fields.some((field) => field.columnName == 'id')
+
+    return type
+  }, types)
+}
+
+const writeFiles = R.curry((opts, types) => {
+  const typeTemplate = handlebars.compile(fs.readFileSync(opts.t, 'utf8'))
+  const queryTemplate = handlebars.compile(fs.readFileSync(opts.q, 'utf8'))
+
+  mkdirp.sync(opts.out)
+
+  if (!opts.onlyQuery) {
+    types.forEach(type => {
+      fs.writeFileSync(path.join(opts.out, `${type.name}_type.rb`), typeTemplate(type))
     })
   }
 
-  return groups
+  if (!opts.onlyTypes) {
+    fs.writeFileSync(path.join(opts.out, 'query_type.rb'), queryTemplate(types))
+  }
 })
 
-const createScalarFields = R.curry((scalarMap, tables) => {
-  return R.map(table => {
-    const fields = R.filter((arr) => arr.length, R.split('\n', table.fields))
+if (opts.schema) {
 
-    table.fields = R.map(field => {
-      const fieldArr = R.filter(R.identity, R.split(' ', field))
-      const name = fieldArr[0]
-      const camelName = name == 'id' ? '_id' : snakeToCamelCase(name)
-      const type = (fieldArr[1] || '').replace(/[^\w]|[\d]/g, '')
-      const scalarType = scalarMap[type] || 'String'
-      const required = field.includes('NOT NULL') ? '!' : ''
-      const property = name !== camelName ? name : null
+  const extractTypes = R.curry((expr, str) => {
+    let match = null
+    const types = []
+    while(match = expr.exec(str)) {
+      const type = createTypeObject(match[1])
+      types.push(Object.assign({}, type, {
+        raw: match[0],
+        columns: match[2].replace(/('|")/g, '')
+      }))
+    }
 
-      return { name, camelName, required, type, scalarType, property }
-    }, fields)
-
-    return table
-  }, tables)
-})
-
-const createAssociationFields = (tables) => {
-  return R.map(table => {
-    table.associations = R.pipe(
-      R.filter(field => field.name.endsWith('_id')),
-      R.map(field => {
-        const name = field.camelName.replace(/Id$/, '')
-        const tableName = toPascalCase(name)
-
-        return { name, tableName }
-      })
-    )(table.fields)
-
-    return table
-  }, tables)
-}
-
-const tables = R.pipe(
-  extractTables(/CREATE TABLE (.*) \(([\s\S][^;]*)(\))/gm),
-  createScalarFields({
-    integer: 'Int',
-    boolean: 'Boolean',
-    character: 'String',
-    text: 'String',
-    timestamp: 'String',
-    tsvector: 'String',
-    date: 'String',
-    datetime: 'String',
-    double: 'Float',
-    float: 'Float'
-  }),
-  createAssociationFields
-)(schema)
-
-mkdirp.sync(opts.out)
-
-if (!opts.onlyQuery) {
-  tables.forEach(table => {
-    fs.writeFileSync(path.join(opts.out, `${table.name}_type.rb`), typeTemplate(table))
+    return types
   })
-}
 
-if (!opts.onlyTypes) {
-  fs.writeFileSync(path.join(opts.out, 'query_type.rb'), queryTemplate(tables))
+  const createScalarFields = R.curry((scalarMap, types) => {
+    return R.map(type => {
+      const columns = R.filter((arr) => arr.length, R.split('\n', type.columns))
+
+      type.fields = R.map(column => {
+        const columnArr = R.filter(R.identity, R.split(' ', column))
+
+        return createFieldObject(
+          scalarMap,
+          columnArr[0],
+          !column.includes('NOT NULL'),
+          (columnArr[1] || '').replace(/[^\w]|[\d]/g, '')
+        )
+      }, columns)
+
+      return type
+    }, types)
+  })
+
+  const schema = fs.readFileSync(opts.schema, 'utf8')
+
+  R.pipe(
+    extractTypes(/CREATE TABLE (.*) \(([\s\S][^;]*)(\))/gm),
+    createScalarFields(SCALAR_FIELDS),
+    createAssociationFields,
+    setHasIdField,
+    writeFiles(opts)
+  )(schema)
+} else {
+
+  const createScalarFields = R.curry((scalarMap, columns, types) => {
+    return R.map(type => {
+      type.fields = R.pipe(
+        R.filter(column => column.table_name === type.tableName),
+        R.map(column => {
+          return createFieldObject(
+            SCALAR_FIELDS,
+            column.column_name,
+            column.is_nullable,
+            column.data_type
+          )
+        })
+      )(columns)
+
+      return type
+    }, types)
+  })
+
+  const client = new pg.Client(`postgres://${opts.u}@${opts.h}:${opts.p}/${opts.d}`);
+
+  client.connect((err) => {
+    if (err) throw err;
+
+    client.query(`SELECT table_name FROM information_schema.tables WHERE table_schema='public'`, (err, tablesResult) => {
+      client.query(`SELECT table_name, column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema='public'`, (err, columnsResult) => {
+        R.pipe(
+          R.map(row => row.table_name),
+          R.map(name => createTypeObject(name)),
+          createScalarFields(SCALAR_FIELDS, columnsResult.rows),
+          createAssociationFields,
+          setHasIdField,
+          writeFiles(opts)
+        )(tablesResult.rows)
+
+        client.end()
+      })
+    })
+  })
 }

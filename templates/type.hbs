@@ -13,13 +13,13 @@
   # scalars
 
 {{#each fields}}
-  field :{{#if property}}{{camelName}}{{else}}{{name}}{{/if}}, {{required}}types.{{scalarType}}, ""{{#if property}}, property: :{{name}}{{/if}}
+  field :{{#if property}}{{name}}{{else}}{{name}}{{/if}}, {{required}}types.{{scalarType}}, ""{{#if property}}, property: :{{columnName}}{{/if}}
 {{/each}}
 
   # associations
 
 {{#each associations}}
-  field :{{name}}, types[{{tableName}}Type], ""
+  field :{{name}}, types[{{type}}Type], ""
 {{/each}}
 
 end
