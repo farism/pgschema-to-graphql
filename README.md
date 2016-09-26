@@ -14,7 +14,7 @@ Node CLI tool for quickly scaffolding out GraphQL types
 -s --schema               input schema file
 -o --out                  output directory
 -t --type-template        type template file
--t --query-template       query template file
+-q --query-template       query template file
 --only-types              only generate the type files
 --only-query              only generate the query root type file
 ```
