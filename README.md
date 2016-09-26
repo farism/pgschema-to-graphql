@@ -12,19 +12,27 @@ Node CLI tool for quickly scaffolding out GraphQL types
 
 ### Usage
 
+#### general
 ```
--h --host                 pg host
--p --port                 pg port
+-o --out                  file output directory
+-t --type-template        type template file
+-q --query-template       query template file
+--only-types              only generate the type files
+--only-query              only generate the query root file
+```
+
+#### psql
+```
+-h --host                 pg host (default: localhost)
+-p --port                 pg port (default: 5432)
 -U --username             pg username
 -w --no-password          don't require password
 -W --password             require password
 -d --database             pg database
+```
+#### pg_dump
+```
 -s --schema               input schema file
--o --out                  output directory
--t --type-template        type template file
--q --query-template       query template file
---only-types              only generate the type files
---only-query              only generate the query root type file
 ```
 
 ### Todo
