@@ -61,6 +61,8 @@ const snakeToCamelCase = (str) => {
 
 const snakeToPascalCase = R.pipe(snakeToCamelCase, toPascalCase)
 
+const sortFields = (a, b) => a.name.localeCompare(b.name)
+
 const createTypeObject = (tableName) => {
   return {
     tableName,
@@ -141,16 +143,19 @@ if (opts.schema) {
     return R.map(type => {
       const columns = R.filter((arr) => arr.length, R.split('\n', type.columns))
 
-      type.fields = R.map(column => {
-        const columnArr = R.filter(R.identity, R.split(' ', column))
+      type.fields = R.pipe(
+        R.map(column => {
+          const columnArr = R.filter(R.identity, R.split(' ', column))
 
-        return createFieldObject(
-          scalarMap,
-          columnArr[0],
-          !column.includes('NOT NULL'),
-          (columnArr[1] || '').replace(/[^\w]|[\d]/g, '')
-        )
-      }, columns)
+          return createFieldObject(
+            scalarMap,
+            columnArr[0],
+            !column.includes('NOT NULL'),
+            (columnArr[1] || '').replace(/[^\w]|[\d]/g, '')
+          )
+        }),
+        R.sort(sortFields)
+      )(columns)
 
       return type
     }, types)
@@ -163,8 +168,10 @@ if (opts.schema) {
     createScalarFields(SCALAR_FIELDS),
     createAssociationFields,
     setHasIdField,
+    R.sort(sortFields),
     writeFiles(opts)
   )(schema)
+
 } else {
 
   const createScalarFields = R.curry((scalarMap, columns, types) => {
@@ -178,7 +185,8 @@ if (opts.schema) {
             column.is_nullable,
             column.data_type
           )
-        })
+        }),
+        R.sort(sortFields)
       )(columns)
 
       return type
@@ -190,14 +198,29 @@ if (opts.schema) {
   client.connect((err) => {
     if (err) throw err;
 
-    client.query(`SELECT table_name FROM information_schema.tables WHERE table_schema='public'`, (err, tablesResult) => {
-      client.query(`SELECT table_name, column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema='public'`, (err, columnsResult) => {
+    const tablesQuery = `
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema='public'
+      ORDER BY table_name
+    `
+
+    const columnsQuery = `
+      SELECT table_name, column_name, data_type, is_nullable
+      FROM information_schema.columns
+      WHERE table_schema='public'
+      ORDER BY column_name
+    `
+
+    client.query(tablesQuery, (err, tablesResult) => {
+      client.query(columnsQuery, (err, columnsResult) => {
         R.pipe(
           R.map(row => row.table_name),
           R.map(name => createTypeObject(name)),
           createScalarFields(SCALAR_FIELDS, columnsResult.rows),
           createAssociationFields,
           setHasIdField,
+          R.sort(sortFields),
           writeFiles(opts)
         )(tablesResult.rows)
 
