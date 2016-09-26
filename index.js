@@ -8,25 +8,25 @@ import R from 'ramda'
 
 const opts = minimist(process.argv.slice(2), {
   default: {
-    schema: 'schema.txt',
-    out: path.join(process.cwd(), 'out'),
-    typeTemplate: './templates/type.hbs',
-    queryTemplate: './templates/query.hbs',
-    onlyTypes: false,
-    onlyQuery: false,
+    'schema': 'schema.txt',
+    'out': path.join(process.cwd(), 'out'),
+    'type-template': './templates/type.hbs',
+    'query-template': './templates/query.hbs',
+    'only-types': false,
+    'only-query': false,
   },
   alias: {
     s: 'schema',
     o: 'out',
-    t: 'typeTemplate',
-    q: 'queryTemplate',
+    t: 'type-template',
+    q: 'query-template',
     onlyTypes: 'only-types',
     onlyQuery: 'only-query',
   }
 })
 
-const typeTemplate = handlebars.compile(fs.readFileSync(opts.typeTemplate, 'utf8'))
-const queryTemplate = handlebars.compile(fs.readFileSync(opts.queryTemplate, 'utf8'))
+const typeTemplate = handlebars.compile(fs.readFileSync(opts.t, 'utf8'))
+const queryTemplate = handlebars.compile(fs.readFileSync(opts.q, 'utf8'))
 const schema = fs.readFileSync(opts.schema, 'utf8')
 
 const toPascalCase = (str) => {
@@ -43,7 +43,7 @@ const snakeToPascalCase = R.pipe(snakeToCamelCase, toPascalCase)
 
 const extractTables = R.curry((expr, str) => {
   let match = null
-  const groups = [];
+  const groups = []
   while(match = expr.exec(str)) {
     groups.push({
       raw: match[0],
@@ -55,19 +55,19 @@ const extractTables = R.curry((expr, str) => {
     })
   }
 
-  return groups;
+  return groups
 })
 
 const createScalarFields = R.curry((scalarMap, tables) => {
   return R.map(table => {
-    const fields = R.filter((arr) => arr.length, R.split('\n', table.fields));
+    const fields = R.filter((arr) => arr.length, R.split('\n', table.fields))
 
     table.fields = R.map(field => {
       const fieldArr = R.filter(R.identity, R.split(' ', field))
       const name = fieldArr[0]
       const camelName = name == 'id' ? '_id' : snakeToCamelCase(name)
       const type = (fieldArr[1] || '').replace(/[^\w]|[\d]/g, '')
-      const scalarType = scalarMap[type]
+      const scalarType = scalarMap[type] || 'String'
       const required = field.includes('NOT NULL') ? '!' : ''
       const property = name !== camelName ? name : null
 
