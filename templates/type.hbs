@@ -1,0 +1,25 @@
+{{pascalName}}Type = GraphQL::ObjectType.define do
+
+  name "{{pascalName}}"
+  description ""
+{{#if hasIdField}}
+
+  # relay node interface
+
+  interfaces [NodeIdentification.interface]
+  global_id_field :id
+{{/if}}
+
+  # scalars
+
+{{#each fields}}
+  field :{{#if property}}{{camelName}}{{else}}{{name}}{{/if}}, {{required}}types.{{scalarType}}, ""{{#if property}}, property: :{{name}}{{/if}}
+{{/each}}
+
+  # associations
+
+{{#each associations}}
+  field :{{name}}, types[{{tableName}}Type], ""
+{{/each}}
+
+end

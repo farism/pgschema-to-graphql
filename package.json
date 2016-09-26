@@ -16,6 +16,7 @@
     "handlebars": "^4.0.5",
     "inflection": "^1.10.0",
     "minimist": "^1.2.0",
+    "mkdirp": "^0.5.1",
     "ramda": "^0.22.1"
   }
 }

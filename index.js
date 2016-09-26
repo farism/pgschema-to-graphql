@@ -1,24 +1,45 @@
 import fs from 'fs'
-import R from 'ramda'
+import path from 'path'
+import mkdirp from 'mkdirp'
 import minimist from 'minimist'
 import handlebars from 'handlebars'
 import { singularize } from 'inflection'
+import R from 'ramda'
 
-const argv = minimist(process.argv.slice(2))
+const opts = minimist(process.argv.slice(2), {
+  default: {
+    schema: 'schema.txt',
+    out: path.join(process.cwd(), 'out'),
+    typeTemplate: './templates/type.hbs',
+    queryTemplate: './templates/query.hbs',
+    onlyTypes: false,
+    onlyQuery: false,
+  },
+  alias: {
+    s: 'schema',
+    o: 'out',
+    t: 'typeTemplate',
+    q: 'queryTemplate',
+    onlyTypes: 'only-types',
+    onlyQuery: 'only-query',
+  }
+})
 
-const objectTemplate = handlebars.compile(fs.readFileSync('./templates/object_generic.hbs', 'utf8'))
-const rootTemplate = handlebars.compile(fs.readFileSync('./templates/object_root.hbs', 'utf8'))
-const schema = fs.readFileSync(argv.schema, 'utf8')
+const typeTemplate = handlebars.compile(fs.readFileSync(opts.typeTemplate, 'utf8'))
+const queryTemplate = handlebars.compile(fs.readFileSync(opts.queryTemplate, 'utf8'))
+const schema = fs.readFileSync(opts.schema, 'utf8')
 
-const snakeToCamel = (str) => {
+const toPascalCase = (str) => {
+  return str.replace(/^(.)/, (_, letter) => R.toUpper(letter))
+}
+
+const snakeToCamelCase = (str) => {
   return str
     .replace(/_{1,}/g, '_')
     .replace(/_(.)/g, (_, letter) => R.toUpper(letter))
 }
 
-const snakeToPascal = R.pipe(snakeToCamel, (str) => {
-  return str.replace(/^(.)/, (_, letter) => R.toUpper(letter))
-})
+const snakeToPascalCase = R.pipe(snakeToCamelCase, toPascalCase)
 
 const extractTables = R.curry((expr, str) => {
   let match = null
@@ -27,8 +48,10 @@ const extractTables = R.curry((expr, str) => {
     groups.push({
       raw: match[0],
       name: singularize(match[1]),
-      pascalName: singularize(snakeToPascal(match[1])),
-      fields: match[2]
+      camelName: singularize(snakeToCamelCase(match[1])),
+      pascalName: singularize(snakeToPascalCase(match[1])),
+      hasIdField: /\bid integer NOT NULL\b/.test(match[2]),
+      fields: match[2].replace(/('|")/g, '')
     })
   }
 
@@ -36,45 +59,66 @@ const extractTables = R.curry((expr, str) => {
 })
 
 const createScalarFields = R.curry((scalarMap, tables) => {
-  return tables.map(table => {
+  return R.map(table => {
     const fields = R.filter((arr) => arr.length, R.split('\n', table.fields));
 
-    table.fields = R.join('\n', R.map(field => {
+    table.fields = R.map(field => {
       const fieldArr = R.filter(R.identity, R.split(' ', field))
+      const name = fieldArr[0]
+      const camelName = name == 'id' ? '_id' : snakeToCamelCase(name)
+      const type = (fieldArr[1] || '').replace(/[^\w]|[\d]/g, '')
+      const scalarType = scalarMap[type]
+      const required = field.includes('NOT NULL') ? '!' : ''
+      const property = name !== camelName ? name : null
 
-      return {
-        name: fieldArr[0],
-        camelName: snakeToCamel(fieldArr[0]),
-        required: field.includes('NOT NULL'),
-        type: scalarMap[fieldArr[1]]
-      }
-    }, fields))
+      return { name, camelName, required, type, scalarType, property }
+    }, fields)
 
     return table
-  })
+  }, tables)
 })
 
 const createAssociationFields = (tables) => {
-  return tables
+  return R.map(table => {
+    table.associations = R.pipe(
+      R.filter(field => field.name.endsWith('_id')),
+      R.map(field => {
+        const name = field.camelName.replace(/Id$/, '')
+        const tableName = toPascalCase(name)
+
+        return { name, tableName }
+      })
+    )(table.fields)
+
+    return table
+  }, tables)
 }
 
 const tables = R.pipe(
   extractTables(/CREATE TABLE (.*) \(([\s\S][^;]*)(\))/gm),
   createScalarFields({
-    'integer': 'Int',
-    'boolean': 'Boolean',
-    'character': 'String',
-    'text': 'String',
-    'timestamp': 'String',
-    'tsvector': 'String',
-    'date': 'String',
-    'datetime': 'String',
-    'double': 'Float',
-    'float': 'Float'
+    integer: 'Int',
+    boolean: 'Boolean',
+    character: 'String',
+    text: 'String',
+    timestamp: 'String',
+    tsvector: 'String',
+    date: 'String',
+    datetime: 'String',
+    double: 'Float',
+    float: 'Float'
   }),
-  // createAssociationFields
+  createAssociationFields
 )(schema)
 
-tables.forEach(table => {
-  console.log(objectTemplate(table))
-})
+mkdirp.sync(opts.out)
+
+if (!opts.onlyQuery) {
+  tables.forEach(table => {
+    fs.writeFileSync(path.join(opts.out, `${table.name}_type.rb`), typeTemplate(table))
+  })
+}
+
+if (!opts.onlyTypes) {
+  fs.writeFileSync(path.join(opts.out, 'query_type.rb'), queryTemplate(tables))
+}
