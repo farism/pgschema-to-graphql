@@ -4,6 +4,8 @@ Node CLI tool for quickly scaffolding out GraphQL types
 
 ### Features
 
+- PG connection support
+- pg_dump support
 - Handlebars templates
 - Generate individual types for each table
 - Generate a query root with each type as a field
@@ -11,6 +13,12 @@ Node CLI tool for quickly scaffolding out GraphQL types
 ### Usage
 
 ```
+-h --host                 pg host
+-p --port                 pg port
+-U --username             pg username
+-w --no-password          don't require password
+-W --password             require password
+-d --database             pg database
 -s --schema               input schema file
 -o --out                  output directory
 -t --type-template        type template file
@@ -23,4 +31,4 @@ Node CLI tool for quickly scaffolding out GraphQL types
 
 - Better CLI
 - Publish on NPM
-- Library agnostic scalar mapping
+- Language/library agnostic scalar mapping
